@@ -105,23 +105,39 @@ class FVMesh:
         face1 = (p0 + p2 + p3)/3.0
         face2 = (p0 + p1 + p3)/3.0
         face3 = (p1 + p2 + p3)/3.0
-        face_cat = np.concatenate((face0,face1,face2,face3))
-        
+        face_cat = np.concatenate((face0,face1,face2,face3))  # stores all faces to later be computed
+        face_unique = np.unique(face_cat, axis=0)  # removes duplicate faces
+
+        # loops through unique faces 
+        # After you have face_unique, just add this:
+        neighbor_distances = []
+
+        for face in face_unique:
+            matches = np.where(np.all(np.abs(face_cat - face) < 1e-11, axis=1))[0]
+            
+            if len(matches) == 2:
+                tet_id1 = matches[0] // len(face0)
+                tet_id2 = matches[1] // len(face0)
+                dist = np.linalg.norm(cell_centroids[tet_id1] - cell_centroids[tet_id2])
+                neighbor_distances.append((tet_id1, tet_id2, dist))
+
+        self.neighbor_distances = np.array(neighbor_distances)
+        print(len(self.neighbor_distances),self.neighbor_distances)
+
+        #print(len(face_cat),face_cat[:10])
 
         # normal of the triangluar
-        face0norm = np.cross(v0, v1)
-        face1norm = np.cross(v1, v3)
+        face0norm = np.cross(v1, v0)
+        face1norm = np.cross(v3, v1)
         face2norm = np.cross(v0, v3)
         face3norm = np.cross(v3, v4)
 
-        # Computes face area using magnitude cross product
+        # computes face area using magnitude cross product
         face0_area = 0.5 * np.linalg.norm(face0norm, axis=1)
         face1_area = 0.5 * np.linalg.norm(face1norm, axis=1)
         face2_area = 0.5 * np.linalg.norm(face2norm, axis=1)
         face3_area = 0.5 * np.linalg.norm(face3norm, axis=1)
-        
 
-        print(len(face_cat),face_cat[:10])
 
         return cell_volumes, cell_centroids
     
