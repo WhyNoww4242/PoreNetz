@@ -18,10 +18,12 @@ def phi(c_array, ci_len, dist, d_eff_array):
     things need to be rewritting in terms of volume
     """
     rho_array = jnp.reshape(c_array, (ci_len, -1))
-    rho_array = jnp.dot(d_eff_array, rho_array)
-    
-    rho = rho_array*dist[0]
-    return rho
+    print(rho_array.shape, 'b dot')
+    rho_array = jnp.dot(rho_array, d_eff_array.T)
+    rho = jnp.sum(rho_array, axis=0)
+    del_phi = rho.at[1:].multiply(dist)
+    del_phi = rho.at[0].multiply(dist[0])
+    return del_phi
 
 def ODE_dis(t, cp, args):
     """
