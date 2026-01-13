@@ -1,8 +1,34 @@
+import numpy as np
 import jax.numpy as jnp
 from jax import jit, lax
 import matplotlib.pyplot as plt
 from modules.graphStyle import set_plot_style, add_subplot_labels
 import diffrax
+
+def volumeMask(x0:float = 0, dx_array:np.array = np.full(100, 1e-2))->jnp.array:
+    """
+    Manually sets the control volumes of discretation and returns centroids of volumes
+    
+    Parameters:
+    -----------
+    x0: inital domain point
+    dx_array: 1D array of control volume element sizes
+        - Default size 100 with all volumes dx = 0.01
+
+    Returns:
+    --------
+    points_array: jnp.array of points
+    vol_array: jnp.array of control volume values
+    """
+    points = np.zeros_like(dx_array)  # point locations 
+    points[0] = x0
+    # loops over volume array and calculates centroid location
+    for i, dx in enumerate(dx_array, start=1):
+        points[i] = points[i-1]+dx/2
+    # converts into jnp
+    vol_array = jnp.array(dx_array)
+    points_array = jnp.array(points)
+    return vol_array, points_array
 
 def weights(points, D_i, D_eff):
     dist = jnp.diff(points)  # finds all point distances
@@ -48,6 +74,9 @@ def ODE_dis(t, cp, args):
     return dcp_dt
 
 def main():
+    print(volumeMask(-1))
+
+def main1():
     D_i = jnp.array([1, 1, 1])
     D_eff = jnp.array([1, -2, 1])
     points = jnp.linspace(0, 1, 10)
