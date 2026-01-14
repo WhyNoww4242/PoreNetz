@@ -1,4 +1,5 @@
 import numpy as np
+import jax
 import jax.numpy as jnp
 from jax import jit, lax
 import matplotlib.pyplot as plt
@@ -58,16 +59,15 @@ def grad_phi(cp_tensor, d_effs, vol_vec, Debye):
     """
     # this is bad i am sorry future bryce
     qs = 0.025
-    n = len(q_encl)+1
-    q_encl = jnp.dot(d_effs, cp_tensor)
+    q_encl = jnp.dot(cp_tensor, d_effs)
+    n = len(q_encl)
     gamma_vec = jnp.zeros(n)
-    gamma_vec = gamma_vec.at[1:].add(-q_encl/(Debye*vol_vec))
-    gamma_vec = gamma_vec.at[0].set(qs)
+    gamma_vec = gamma_vec.at[:].add(-q_encl/(Debye*vol_vec))
 
     # solve system Ax=b by using inverse x = b A^-1
     A = -jnp.eye(n) + jnp.eye(n, k=-1)
-    del_phi = jnp.dot(gamma_vec, jnp.linalg.inv(A))
-
+    # del_phi = jnp.dot(gamma_vec, jnp.linalg.inv(A))
+    del_phi = jnp.full_like(vol_vec, 0.01)
     return del_phi
 
 def ODE_dis(t, cp_vec, args):
@@ -79,7 +79,8 @@ def ODE_dis(t, cp_vec, args):
     cp_tensor = jnp.reshape(cp_vec, (-1, ions_num))
     cw_tensor = jnp.roll(cp_tensor, 1)[1:,:]
     ce_tensor = jnp.roll(cp_tensor, -1)[:-1,:]
-    del_phi = grad_phi(cp_tensor, d_effs, vol_vec)
+    del_phi = grad_phi(cp_tensor, d_effs, vol_vec, Debye)
+
 
     for i in range(ions_num):
       # left (west) flux to centroid 
@@ -93,33 +94,35 @@ def ODE_dis(t, cp_vec, args):
       cp_tensor = cp_tensor.at[0,i].add(js_left[i])  # left
       cp_tensor = cp_tensor.at[-1,i].add(js_right[i])  # right
       
+      jax.debug.print("dellll{}", cp_tensor[:,i])
       cp_tensor = cp_tensor.at[:,i].divide(vol_vec)  # divides by volume of each cell
     
+    
     dcp_dt = jnp.reshape(cp_tensor, -1)
+
     return dcp_dt
 
 def main():
     D_i = jnp.array([1.0, 1.0, 1.0])
     D_eff = jnp.array([1.0, -2.0, 1.0])
-    points = jnp.linspace(0, 1, 10)  # Changed back to 10 points for faster execution
-    
+    Debye = 1
+    # js_left, js_right, vol_vec, as_vec, bs_vec, d_effs, Debye
     # Get spatial discretization info
-    dist = jnp.diff(points)
     ci_len = len(D_i)
-    n_points = len(points)
     
     # Calculate weights for each species and stack them
     a_vecs = []
     b_vecs = []
+    points, vol_vec = volumeMask(-1,)
+    n_points = len(points)
     for i in range(ci_len):
         a, b = weights(points, D_i[i], D_eff[i])
         a_vecs.append(a)
         b_vecs.append(b)
     
     # Stack into arrays: (ci_len, n_points-1)
-    a_vecs = jnp.array(a_vecs)
-    b_vecs = jnp.array(b_vecs)
-    
+    as_vec = jnp.transpose(jnp.array(a_vecs))
+    bs_vec = jnp.transpose(jnp.array(b_vecs))
     # Define boundary fluxes for each species
     # Only first species (index 0) has flux of 1.0 at both boundaries
     # IMPORTANT: These must be JAX arrays, not Python lists
@@ -130,7 +133,7 @@ def main():
     print(f"Boundary fluxes (right): {j_right}")
     
     # Pack args tuple
-    args = (j_left, j_right, dist, a_vecs, b_vecs, D_eff, ci_len)
+    args = (j_left, j_right, vol_vec, as_vec, bs_vec, D_eff, Debye)
     
     term = diffrax.ODETerm(ODE_dis)
     
@@ -140,7 +143,7 @@ def main():
     # Temporal discretisation
     t0 = 0.0
     t_final = 0.1
-    δt = 0.0001
+    δt = 0.00001
     saveat = diffrax.SaveAt(ts=jnp.linspace(t0, t_final, 50))
     
     # Tolerances
@@ -164,7 +167,7 @@ def main():
         args=args,
         saveat=saveat,
         stepsize_controller=stepsize_controller,
-        max_steps=None,
+        max_steps=1,
     )
     
     print("Solution shape:", sol.ys.shape)
