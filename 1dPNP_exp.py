@@ -60,15 +60,15 @@ def grad_phi(cp_tensor, d_effs, vol_vec, Debye):
     # this is bad i am sorry future bryce
     qs = 0.025
     q_encl = jnp.dot(cp_tensor, d_effs)
-    n = len(q_encl)
+    n = len(q_encl)+1
     gamma_vec = jnp.zeros(n)
-    gamma_vec = gamma_vec.at[:].add(-q_encl/(Debye*vol_vec))
+    gamma_vec = gamma_vec.at[1:].add(-q_encl/(Debye*vol_vec))
+    gamma_vec = gamma_vec.at[0].set(qs)
 
     # solve system Ax=b by using inverse x = b A^-1
     A = -jnp.eye(n) + jnp.eye(n, k=-1)
-    # del_phi = jnp.dot(gamma_vec, jnp.linalg.inv(A))
-    del_phi = jnp.full_like(vol_vec, 0.01)
-    return del_phi
+    del_phi = jnp.dot(gamma_vec, jnp.linalg.inv(A))
+    return del_phi[1:]
 
 def ODE_dis(t, cp_vec, args):
     """
@@ -81,6 +81,7 @@ def ODE_dis(t, cp_vec, args):
     ce_tensor = jnp.roll(cp_tensor, -1)[:-1,:]
     del_phi = grad_phi(cp_tensor, d_effs, vol_vec, Debye)
 
+    print(as_vec.shape, 'as')
 
     for i in range(ions_num):
       # left (west) flux to centroid 
@@ -94,10 +95,8 @@ def ODE_dis(t, cp_vec, args):
       cp_tensor = cp_tensor.at[0,i].add(js_left[i])  # left
       cp_tensor = cp_tensor.at[-1,i].add(js_right[i])  # right
       
-      jax.debug.print("dellll{}", cp_tensor[:,i])
       cp_tensor = cp_tensor.at[:,i].divide(vol_vec)  # divides by volume of each cell
-    
-    
+      jax.debug.print("x = {}", cp_tensor[:,i])
     dcp_dt = jnp.reshape(cp_tensor, -1)
 
     return dcp_dt
@@ -113,7 +112,7 @@ def main():
     # Calculate weights for each species and stack them
     a_vecs = []
     b_vecs = []
-    points, vol_vec = volumeMask(-1,)
+    vol_vec, points,  = volumeMask(-1,)
     n_points = len(points)
     for i in range(ci_len):
         a, b = weights(points, D_i[i], D_eff[i])
@@ -167,7 +166,7 @@ def main():
         args=args,
         saveat=saveat,
         stepsize_controller=stepsize_controller,
-        max_steps=1,
+        max_steps=50,
     )
     
     print("Solution shape:", sol.ys.shape)
