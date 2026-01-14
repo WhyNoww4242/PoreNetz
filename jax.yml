@@ -215,5 +215,11 @@ dependencies:
   - zlib-ng=2.3.2=hceb46e0_1
   - zstd=1.5.7=hb78ec9c_6
   - pip:
+      - diffrax==0.7.0
+      - equinox==0.13.2
       - gmsh==4.15.0
+      - jaxtyping==0.3.5
+      - lineax==0.0.8
+      - optimistix==0.0.11
+      - wadler-lindig==0.1.7
 prefix: /home/spike/miniforge3/envs/jax

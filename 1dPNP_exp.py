@@ -1,10 +1,50 @@
+import numpy as np
 import jax.numpy as jnp
 from jax import jit, lax
 import matplotlib.pyplot as plt
 from modules.graphStyle import set_plot_style, add_subplot_labels
 import diffrax
 
-def weights(points, D_i, D_eff):
+def volumeMask(x0:float = 0, dx_array:np.array = np.full(400, 1e-2))->jnp.array:
+    """
+    Manually sets the control volumes of discretation and returns centroids of volumes
+    
+    Parameters:
+    -----------
+    x0: inital domain point
+    dx_array: 1D array of control volume element sizes
+        - Default size 100 with all volumes dx = 0.01
+
+    Returns:
+    --------
+    points_array: jnp.array of points
+    vol_array: jnp.array of control volume values
+    """
+    points = np.zeros_like(dx_array)  # point locations 
+    points[0] = x0+dx_array[0]/2  # initial point
+    # loops over volume array and calculates centroid location
+    for i in range(1, len(dx_array)):
+        points[i] = points[i-1]+dx_array[i]/2
+    # converts into jax array
+    vol_array = jnp.array(dx_array)
+    points_array = jnp.array(points)
+    return vol_array, points_array
+
+def weights(points:jnp.array, D_i:float, D_eff:float):
+    """
+    Finds weights vectors for the FVM 
+    
+    Parameters:
+    -----------
+    points: jnp.array of volume centroids
+    D_i: diffusion coefficient of ion i
+    D_eff: effective diffusion of the electromigration term
+
+    Returns:
+    --------
+    a_vec: jnp.array of diffusive coefficents for species i
+    b_vec: jnp.array of electormigrative coefficents for species i
+    """
     dist = jnp.diff(points)  # finds all point distances
     # creates a_vec(diffusion) and b_vec (electromigration) discretions 
     a_vec = jnp.ones_like(dist)
@@ -13,72 +53,49 @@ def weights(points, D_i, D_eff):
     b_vec = b_vec.at[:].set(D_eff/(2*dist))
     return a_vec, b_vec
 
-def phi(c_array, ci_len, n_points, d_eff_array):
+def grad_phi(cp_tensor, d_effs, vol_vec, Debye):
     """
-    Calculate electric potential gradient from charge density
-    c_array: flattened concentration array (ci_len * n_points,)
     """
-    # Reshape to (ci_len, n_points)
-    c_reshaped = jnp.reshape(c_array, (ci_len, n_points))
-    
-    # Calculate total charge density at each point
-    # d_eff_array: (ci_len,), c_reshaped: (ci_len, n_points)
-    rho = jnp.dot(d_eff_array, c_reshaped)  # (n_points,)
-    
-    return rho
+    # this is bad i am sorry future bryce
+    qs = 0.025
+    n = len(q_encl)+1
+    q_encl = jnp.dot(d_effs, cp_tensor)
+    gamma_vec = jnp.zeros(n)
+    gamma_vec = gamma_vec.at[1:].add(-q_encl/(Debye*vol_vec))
+    gamma_vec = gamma_vec.at[0].set(qs)
 
-def ODE_dis(t, cp, args):
+    # solve system Ax=b by using inverse x = b A^-1
+    A = -jnp.eye(n) + jnp.eye(n, k=-1)
+    del_phi = jnp.dot(gamma_vec, jnp.linalg.inv(A))
+
+    return del_phi
+
+def ODE_dis(t, cp_vec, args):
     """
-    ODE for multiple ionic species with electromigration using finite volume method
-    cp is organized as: [species1_points, species2_points, species3_points, ...]
     """
-    j_left, j_right, dist, a_vecs, b_vecs, d_eff, ci_len = args
+    js_left, js_right, vol_vec, as_vec, bs_vec, d_effs, Debye= args
+
+    ions_num = len(js_left)  # number of ions based on flux vector
+    cp_tensor = jnp.reshape(cp_vec, (-1, ions_num))
+    cw_tensor = jnp.roll(cp_tensor, 1)[1:,:]
+    ce_tensor = jnp.roll(cp_tensor, -1)[:-1,:]
+    del_phi = grad_phi(cp_tensor, d_effs, vol_vec)
+
+    for i in range(ions_num):
+      # left (west) flux to centroid 
+      cp_tensor =  cp_tensor.at[:-1,i].multiply((bs_vec[:,i]*del_phi[:-1] - as_vec[:,i]))
+      cp_tensor =  cp_tensor.at[:-1,i].add((bs_vec[:,i]*del_phi[:-1] + as_vec[:,i])*cw_tensor[:,i])
+      # right (east) flux to centroid 
+      cp_tensor =  cp_tensor.at[1:,i].multiply((bs_vec[:,i]*del_phi[1:] - as_vec[:,i]))
+      cp_tensor =  cp_tensor.at[1:,i].add((bs_vec[:,i]*del_phi[1:] + as_vec[:,i])*ce_tensor[:,i])
+      
+      # constant flux boundary conditions
+      cp_tensor = cp_tensor.at[0,i].add(js_left[i])  # left
+      cp_tensor = cp_tensor.at[-1,i].add(js_right[i])  # right
+      
+      cp_tensor = cp_tensor.at[:,i].divide(vol_vec)  # divides by volume of each cell
     
-    n_points = len(cp) // ci_len
-    
-    # Get potential (charge density) at each spatial point
-    rho = phi(cp, ci_len, n_points, d_eff)
-    
-    # Initialize time derivative
-    dcp_dt = jnp.zeros_like(cp)
-    
-    # Process each species
-    for i in range(ci_len):
-        # Extract concentration for this species
-        start_idx = i * n_points
-        end_idx = (i + 1) * n_points
-        c_species = cp[start_idx:end_idx]
-        
-        # Get the weights for this species
-        a_vec = a_vecs[i]
-        b_vec = b_vecs[i]
-        
-        # Get boundary fluxes for this species
-        j_left_i = j_left[i]
-        j_right_i = j_right[i]
-        
-        # Shifted concentrations (neighbors)
-        cw = jnp.roll(c_species, 1)   # west/left neighbor
-        ce = jnp.roll(c_species, -1)  # east/right neighbor
-        
-        # Finite volume method
-        dc_dt = jnp.zeros(n_points)
-        
-        # Left flux contributions (flux from west into cell)
-        dc_dt = dc_dt.at[:-1].add((b_vec * rho[:-1] - a_vec) * c_species[:-1] / dist)
-        dc_dt = dc_dt.at[1:].add((b_vec * rho[1:] - a_vec) * c_species[1:] / dist)
-        
-        # Right flux contributions (flux from east into cell)  
-        dc_dt = dc_dt.at[:-1].add((b_vec * rho[:-1] + a_vec) * cw[:-1] / dist)
-        dc_dt = dc_dt.at[1:].add((b_vec * rho[1:] + a_vec) * ce[1:] / dist)
-        
-        # Boundary conditions
-        dc_dt = dc_dt.at[0].add(j_left_i / dist[0])
-        dc_dt = dc_dt.at[-1].add(j_right_i / dist[-1])
-        
-        # Store in full array
-        dcp_dt = dcp_dt.at[start_idx:end_idx].set(dc_dt)
-    
+    dcp_dt = jnp.reshape(cp_tensor, -1)
     return dcp_dt
 
 def main():
