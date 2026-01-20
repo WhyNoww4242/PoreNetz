@@ -70,6 +70,13 @@ def grad_phi(cp_tensor, d_effs, vol_vec, Debye):
 
     return del_phi
 
+def calcPhi(cp_tensor, points, bc_left, bc_right, Debye):
+    
+    
+
+
+    return phi_vec, dphi_vec
+
 def ODE_dis(t, cp_vec, args):
     """
     """
@@ -98,27 +105,6 @@ def ODE_dis(t, cp_vec, args):
     dcp_dt = jnp.reshape(cp_tensor, -1)
     return dcp_dt
 
-
-def ODE_dis_old(t, cp, args):
-    """
-    """
-    j_left, j_right, dist, a_vec, b_vec, d_eff, ci_len = args
-    del_phi = phi(cp, ci_len, dist, d_eff)
-    
-    cw = jnp.roll(cp, 1)[1:]
-    ce = jnp.roll(cp, -1)[:-1]
-    
-    dcp_dt = jnp.zeros_like(cp)
-    dcp_dt = dcp_dt.at[:-1].add((b_vec*del_phi[:-1] - a_vec)*cp[:-1]/dist)  # left flux for cp
-    dcp_dt = dcp_dt.at[:-1].add((b_vec*del_phi[:-1] + a_vec)*cw/dist)  # left flux for cp
-    dcp_dt = dcp_dt.at[1:].add((b_vec*del_phi[1:] - a_vec)*cp[1:]/dist)  # right flux for cp
-    dcp_dt = dcp_dt.at[1:].add((b_vec*del_phi[1:] + a_vec)*ce/dist)  # right flux for cp
-    
-    # BC added and distance assumed to be mirroed
-    dcp_dt = dcp_dt.at[0].add(j_left/dist[0])
-    dcp_dt = dcp_dt.at[-1].add(j_right/dist[-1])
-    
-    return dcp_dt
 
 def main():
     D_i = jnp.array([1, 1, 1])
